@@ -8,6 +8,7 @@
 # `cargo nextest run --workspace --profile default` safe too.)
 [test-groups]
 lifeguard-shared-postgres = { max-threads = 1 }
+lifeguard-shared-reflector = { max-threads = 1 }
 
 [profile.default]
 # Retry flaky tests up to 3 times
@@ -34,6 +35,11 @@ filter = 'binary(db_integration_suite)'
 test-group = 'lifeguard-shared-postgres'
 slow-timeout = { period = "180s" }
 
+# Reflector integration tests share one table + NOTIFY channel + Redis key.
+[[profile.default.overrides]]
+filter = 'binary(reflector_integration)'
+test-group = 'lifeguard-shared-reflector'
+
 # Override slow timeout for integration tests
 [profile.ci]
 retries = 3
@@ -49,6 +55,10 @@ junit = { path = "test-results.xml" }
 filter = 'binary(db_integration_suite)'
 test-group = 'lifeguard-shared-postgres'
 slow-timeout = { period = "300s" }
+
+[[profile.ci.overrides]]
+filter = 'binary(reflector_integration)'
+test-group = 'lifeguard-shared-reflector'
 
 # Single-threaded DB integration: avoids DDL races and connection exhaustion on a shared Postgres
 # (e.g. `just dev-up` + `TEST_DATABASE_URL`). See docs/TEST_INFRASTRUCTURE.md.

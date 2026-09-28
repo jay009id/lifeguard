@@ -1,0 +1,23 @@
+# Example configuration for lifeguard-reflector.
+#
+# Copy to reflector.toml (or point --config here) and adjust. Every field can
+# also be overridden via REFLECTOR_* environment variables — see the README.
+
+pg_url = "postgres://postgres:postgres@127.0.0.1:5432/postgres"
+redis_url = "redis://127.0.0.1:6379"
+
+# Channels to LISTEN — must match the entities' #[notify(channel = "...")].
+channels = ["lifeguard_updates"]
+
+# Cache TTL for refreshed keys; keep in sync with the ORM's default
+# (lifeguard::cache::keys::DEFAULT_CACHE_TTL_SECS = 3600).
+ttl_seconds = 3600
+
+# Leader election (single-node Redlock).
+lock_key = "lifeguard:reflector:leader"
+lock_ttl_ms = 10000
+
+# Notification poll interval.
+poll_interval_ms = 100
+
+log_level = "info"

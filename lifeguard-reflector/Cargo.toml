@@ -8,8 +8,25 @@ description = "Enterprise-grade distributed cache coherence microservice for Lif
 authors = ["Microscaler, Inc. <enterprise@microscaler.io>"]
 
 [dependencies]
-# TODO: Add dependencies as implementation progresses
-# - PostgreSQL client for LISTEN/NOTIFY
-# - Redis client
-# - Raft consensus library
-# - Logging and observability
+# PostgreSQL client for LISTEN/NOTIFY (same rev as the workspace)
+may_postgres = { git = "https://github.com/microscaler/may_postgres.git", rev = "2d4127c0a05b6fb7fc8ad7c16100dfe290972f48", features = [
+    "with-chrono-0_4",
+    "with-uuid-1",
+    "with-serde_json-1",
+] }
+# Redis client (cache + leader lock)
+redis = "0.26"
+# NOTIFY payload parsing + row serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["serde"] }
+# Logging and observability
+log = "0.4"
+env_logger = "0.11"
+# CLI argument parsing
+clap = { version = "4.6", features = ["derive"] }
+# Configuration file parsing
+toml = "0.9"
+# Error handling
+thiserror = "1.0"
