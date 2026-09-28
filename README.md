@@ -88,7 +88,7 @@ Lifeguard is **OpenTelemetry-compatible**: optional `**tracing`** spans/events a
 
 - **Library tests:** `cargo test -p lifeguard`, workspace members (`lifeguard-derive`, `lifeguard-migrate`, `lifeguard-reflector`, etc.), and (when configured) `cargo nextest` per [DEVELOPMENT.md](./DEVELOPMENT.md) / [justfile](./justfile).
 - **Integration database:** `lifeguard::test_helpers::TestDatabase` and env vars such as `TEST_DATABASE_URL` — see [docs/TEST_INFRASTRUCTURE.md](./docs/TEST_INFRASTRUCTURE.md).
-- **Transparent cache / reflector:** `tests/db_integration/cache_transparent.rs` (db suite) exercises the Redis cache-aside path against `TEST_REDIS_URL`; `lifeguard-reflector/tests/reflector_integration.rs` proves leader election and NOTIFY-driven refresh (both envs required, skips otherwise).
+- **Transparent cache / reflector:** `tests/db_integration/cache_transparent.rs` (db suite) exercises the Redis cache-aside path against `TEST_REDIS_URL`; `lifeguard-reflector/tests/reflector_integration.rs` proves leader election and NOTIFY-driven refresh (both envs required, skips otherwise). Full runbook: **[docs/TESTING_CACHE_REFLECTOR.md](./docs/TESTING_CACHE_REFLECTOR.md)**; one-command runner: **`scripts/test-cache-reflector.sh`** (`--full` adds db suite + workspace CI parity).
 
 There is **no** `lifeguard::testkit` / `test_pool!` macro in this repository; use `test_helpers` and the integration-test binaries under `tests/`.
 
