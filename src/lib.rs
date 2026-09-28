@@ -125,7 +125,9 @@ pub use connection::{
 };
 
 // Re-export executor types for convenience
-pub use executor::{LifeError, LifeExecutor, MayPostgresExecutor, SessionContext};
+pub use executor::{
+    CachedLifeExecutor, LifeError, LifeExecutor, MayPostgresExecutor, SessionContext,
+};
 
 // Query builder - Epic 02 Story 03
 pub mod query;
@@ -206,7 +208,9 @@ pub use migration::{
 
 // Cache Coherence Architecture - Epic 07 Phase 4
 pub mod cache;
-pub use cache::{CacheError, CacheProvider, CachedResult, DefaultCacheProvider};
+pub use cache::{
+    CacheError, CacheProvider, CachedResult, DefaultCacheProvider, RedisCacheProvider,
+};
 
 /// Whether `lifeguard.*` tracing spans nest under the caller's current span
 /// (default: root spans; see `metrics::tracing_helpers`).

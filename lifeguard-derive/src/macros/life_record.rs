@@ -1558,20 +1558,13 @@ pub fn derive_life_record(input: TokenStream) -> TokenStream {
                 // Call after_insert hook
                 updated_record.after_insert(&model)?;
 
-                // Transparent Cache Write-Through
+                // Transparent Cache Invalidation
+                // (explicit: the read path repopulates on miss; the reflector refreshes warm keys)
                 if let Some(cache) = executor.cache_provider() {
                     let table_name = <#entity_name as lifeguard::LifeEntityName>::table_name(&#entity_name::default());
-                    if let Some(pk_value) = lifeguard::ModelTrait::get_primary_key_values(&model).first() {
-                        let id_str = match pk_value {
-                            sea_query::Value::BigInt(Some(v)) => v.to_string(),
-                            sea_query::Value::Int(Some(v)) => v.to_string(),
-                            _ => "".to_string(),
-                        };
-                        if !id_str.is_empty() {
-                            let cache_key = format!("lifeguard:model:{}:{}", table_name, id_str);
-                            if let Ok(json_str) = serde_json::to_string(&model) {
-                                let _ = cache.set(&cache_key, &json_str, Some(3600));
-                            }
+                    for pk_value in lifeguard::ModelTrait::get_primary_key_values(&model) {
+                        if let Some(id_str) = lifeguard::cache::cache_key_pk_string(&pk_value) {
+                            let _ = cache.invalidate(&lifeguard::cache::model_cache_key(&table_name, &id_str));
                         }
                     }
                 }
@@ -1677,20 +1670,13 @@ pub fn derive_life_record(input: TokenStream) -> TokenStream {
                 // Call after_update hook
                 record_for_hooks.after_update(&model)?;
 
-                // Transparent Cache Write-Through
+                // Transparent Cache Invalidation
+                // (explicit: the read path repopulates on miss; the reflector refreshes warm keys)
                 if let Some(cache) = executor.cache_provider() {
                     let table_name = <#entity_name as lifeguard::LifeEntityName>::table_name(&#entity_name::default());
-                    if let Some(pk_value) = lifeguard::ModelTrait::get_primary_key_values(&model).first() {
-                        let id_str = match pk_value {
-                            sea_query::Value::BigInt(Some(v)) => v.to_string(),
-                            sea_query::Value::Int(Some(v)) => v.to_string(),
-                            _ => "".to_string(),
-                        };
-                        if !id_str.is_empty() {
-                            let cache_key = format!("lifeguard:model:{}:{}", table_name, id_str);
-                            if let Ok(json_str) = serde_json::to_string(&model) {
-                                let _ = cache.set(&cache_key, &json_str, Some(3600));
-                            }
+                    for pk_value in lifeguard::ModelTrait::get_primary_key_values(&model) {
+                        if let Some(id_str) = lifeguard::cache::cache_key_pk_string(&pk_value) {
+                            let _ = cache.invalidate(&lifeguard::cache::model_cache_key(&table_name, &id_str));
                         }
                     }
                 }
@@ -1810,14 +1796,8 @@ pub fn derive_life_record(input: TokenStream) -> TokenStream {
                     let table_name = <#entity_name as lifeguard::LifeEntityName>::table_name(&#entity_name::default());
                     #(
                         if let Some(pk_value) = original_pk_values.get(&<#entity_name as lifeguard::LifeModelTrait>::Column::#primary_key_column_variants) {
-                            let id_str = match pk_value {
-                                sea_query::Value::BigInt(Some(v)) => v.to_string(),
-                                sea_query::Value::Int(Some(v)) => v.to_string(),
-                                _ => "".to_string(),
-                            };
-                            if !id_str.is_empty() {
-                                let cache_key = format!("lifeguard:model:{}:{}", table_name, id_str);
-                                let _ = cache.invalidate(&cache_key);
+                            if let Some(id_str) = lifeguard::cache::cache_key_pk_string(pk_value) {
+                                let _ = cache.invalidate(&lifeguard::cache::model_cache_key(&table_name, &id_str));
                             }
                         }
                     )*

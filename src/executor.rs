@@ -289,6 +289,176 @@ impl LifeExecutor for &dyn LifeExecutor {
     }
 }
 
+/// Decorator executor that attaches a transparent
+/// [`CacheProvider`](crate::cache::CacheProvider) to any inner executor.
+///
+/// Every `LifeExecutor` method is delegated to the inner executor; only
+/// [`cache_provider`](LifeExecutor::cache_provider) is overridden, which is
+/// what activates the cache-aside read path
+/// ([`ModelManager::find_by_id`](crate::query::manager::ModelManager::find_by_id))
+/// and the generated write-path invalidation. Use
+/// [`MayPostgresExecutor::with_cache_provider`] or construct it directly for
+/// pooled and other executors.
+///
+/// # Example
+///
+/// ```no_run
+/// use std::sync::Arc;
+/// use lifeguard::{connect, CachedLifeExecutor, MayPostgresExecutor, RedisCacheProvider};
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let client = connect("postgresql://postgres:***@localhost:5432/mydb")?;
+/// let provider = Arc::new(RedisCacheProvider::new("redis://127.0.0.1:6379")?);
+/// let executor = CachedLifeExecutor::new(MayPostgresExecutor::new(client), provider);
+/// # Ok(())
+/// # }
+/// ```
+pub struct CachedLifeExecutor<E> {
+    inner: E,
+    cache_provider: Option<std::sync::Arc<dyn crate::cache::CacheProvider>>,
+}
+
+impl<E: LifeExecutor> CachedLifeExecutor<E> {
+    /// Wraps `inner` and activates the transparent cache through `provider`.
+    #[must_use]
+    pub fn new(inner: E, provider: std::sync::Arc<dyn crate::cache::CacheProvider>) -> Self {
+        Self {
+            inner,
+            cache_provider: Some(provider),
+        }
+    }
+
+    /// Returns a reference to the wrapped executor.
+    pub fn inner(&self) -> &E {
+        &self.inner
+    }
+
+    /// Builder form of [`new`](Self::new).
+    #[must_use]
+    pub fn with_cache_provider(
+        mut self,
+        provider: std::sync::Arc<dyn crate::cache::CacheProvider>,
+    ) -> Self {
+        self.cache_provider = Some(provider);
+        self
+    }
+
+    /// Replaces or removes the cache provider at runtime.
+    pub fn set_cache_provider(
+        &mut self,
+        provider: Option<std::sync::Arc<dyn crate::cache::CacheProvider>>,
+    ) {
+        self.cache_provider = provider;
+    }
+}
+
+impl<E: LifeExecutor> std::ops::Deref for CachedLifeExecutor<E> {
+    type Target = E;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<E: LifeExecutor> LifeExecutor for CachedLifeExecutor<E> {
+    fn execute(&self, query: &str, params: &[&dyn ToSql]) -> Result<u64, LifeError> {
+        self.inner.execute(query, params)
+    }
+
+    fn query_one(&self, query: &str, params: &[&dyn ToSql]) -> Result<Row, LifeError> {
+        self.inner.query_one(query, params)
+    }
+
+    fn query_all(&self, query: &str, params: &[&dyn ToSql]) -> Result<Vec<Row>, LifeError> {
+        self.inner.query_all(query, params)
+    }
+
+    fn execute_values(&self, query: &str, values: &sea_query::Values) -> Result<u64, LifeError> {
+        self.inner.execute_values(query, values)
+    }
+
+    fn query_one_values(&self, query: &str, values: &sea_query::Values) -> Result<Row, LifeError> {
+        self.inner.query_one_values(query, values)
+    }
+
+    fn query_all_values(
+        &self,
+        query: &str,
+        values: &sea_query::Values,
+    ) -> Result<Vec<Row>, LifeError> {
+        self.inner.query_all_values(query, values)
+    }
+
+    fn cache_provider(&self) -> Option<std::sync::Arc<dyn crate::cache::CacheProvider>> {
+        self.cache_provider.clone()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+#[allow(clippy::expect_used)]
+mod cached_executor_tests {
+    use super::*;
+    use crate::cache::CachedResult;
+    use std::cell::RefCell;
+
+    /// Minimal executor stub: records calls, returns canned rows.
+    struct StubExecutor {
+        calls: RefCell<usize>,
+    }
+
+    impl LifeExecutor for StubExecutor {
+        fn execute(&self, _query: &str, _params: &[&dyn ToSql]) -> Result<u64, LifeError> {
+            *self.calls.borrow_mut() += 1;
+            Ok(1)
+        }
+
+        fn query_one(&self, _query: &str, _params: &[&dyn ToSql]) -> Result<Row, LifeError> {
+            Err(LifeError::Other("stub: no rows".to_string()))
+        }
+
+        fn query_all(&self, _query: &str, _params: &[&dyn ToSql]) -> Result<Vec<Row>, LifeError> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn decorator_delegates_and_exposes_provider() {
+        let inner = StubExecutor {
+            calls: RefCell::new(0),
+        };
+        let provider = crate::cache::DefaultCacheProvider;
+        let exec = CachedLifeExecutor::new(inner, std::sync::Arc::new(provider));
+
+        let cache = exec.cache_provider().expect("provider attached");
+        assert!(matches!(
+            cache.get("lifeguard:model:users:42"),
+            Ok(CachedResult::Miss)
+        ));
+
+        assert_eq!(exec.execute("INSERT ...", &[]).unwrap(), 1);
+        assert_eq!(*exec.inner().calls.borrow(), 1);
+        assert!(exec.query_all("SELECT ...", &[]).is_ok());
+
+        // Deref passthrough
+        let _: &StubExecutor = &exec;
+    }
+
+    #[test]
+    fn provider_can_be_replaced() {
+        let inner = StubExecutor {
+            calls: RefCell::new(0),
+        };
+        let mut exec = CachedLifeExecutor::new(
+            inner,
+            std::sync::Arc::new(crate::cache::DefaultCacheProvider),
+        );
+        assert!(exec.cache_provider().is_some());
+        exec.set_cache_provider(None);
+        assert!(exec.cache_provider().is_none());
+    }
+}
+
 /// Implementation of `LifeExecutor` for `may_postgres::Client`
 ///
 /// This is the primary executor implementation that directly uses a `may_postgres::Client`.
@@ -359,6 +529,34 @@ impl MayPostgresExecutor {
     pub fn with_session_context(mut self, ctx: SessionContext) -> Self {
         self.session_context = Some(ctx);
         self
+    }
+
+    /// Attaches a transparent [`CacheProvider`](crate::cache::CacheProvider),
+    /// returning a [`CachedLifeExecutor`] wrapper around this executor.
+    ///
+    /// This activates the cache-aside read path
+    /// ([`ModelManager::find_by_id`](crate::query::manager::ModelManager::find_by_id))
+    /// and the generated write-path invalidation.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::sync::Arc;
+    /// use lifeguard::{connect, MayPostgresExecutor, RedisCacheProvider};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = connect("postgresql://postgres:***@localhost:5432/mydb")?;
+    /// let executor = MayPostgresExecutor::new(client)
+    ///     .with_cache_provider(Arc::new(RedisCacheProvider::new("redis://127.0.0.1:6379")?));
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_cache_provider(
+        self,
+        provider: std::sync::Arc<dyn crate::cache::CacheProvider>,
+    ) -> CachedLifeExecutor<Self> {
+        CachedLifeExecutor::new(self, provider)
     }
 
     /// Runs `SELECT public.rls_set_session($1, ..., $8)` on the underlying

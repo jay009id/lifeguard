@@ -180,6 +180,27 @@ where
     /// # Errors
     ///
     /// Returns `LifeError` if the query execution or row parsing fails.
+    ///
+    /// # Transparent cache
+    ///
+    /// When the executor exposes a [`CacheProvider`](crate::cache::CacheProvider)
+    /// (see [`CachedLifeExecutor`](crate::CachedLifeExecutor)), this performs
+    /// cache-aside: GET `lifeguard:model:<table>:<id>` first, and on a miss the
+    /// Postgres result is populated with the default TTL
+    /// ([`DEFAULT_CACHE_TTL_SECS`](crate::cache::DEFAULT_CACHE_TTL_SECS)).
+    /// The generated `LifeRecord` write path invalidates that key on
+    /// insert/update/delete, and `lifeguard-reflector` refreshes warm keys
+    /// after commits.
+    ///
+    /// Caveats:
+    /// - Only serves entities whose single-column primary key is an integer
+    ///   column named `id` (the `i64` signature). Other key shapes are served
+    ///   straight from the database.
+    /// - The cached value bypasses RLS/session-context filtering. Do not
+    ///   combine a cache provider with session-context executors for
+    ///   RLS-protected entities.
+    /// - Cache errors fail open: a broken cache silently falls through to the
+    ///   database, and a value that fails to deserialize is repopulated.
     fn find_by_id<Ex: LifeExecutor>(
         executor: &Ex,
         id: i64,
@@ -190,7 +211,7 @@ where
         use sea_query::ExprTrait;
 
         let table_name = Self::default().table_name();
-        let cache_key = format!("lifeguard:model:{table_name}:{id}");
+        let cache_key = crate::cache::model_cache_key(table_name, &id.to_string());
 
         // 1. Transparent Cache Verification
         if let Some(cache) = executor.cache_provider() {
@@ -212,7 +233,11 @@ where
         if let Some(ref m) = model {
             if let Some(cache) = executor.cache_provider() {
                 if let Ok(json_str) = serde_json::to_string(m) {
-                    let _ = cache.set(&cache_key, &json_str, Some(3600)); // Default TTL 1 hour
+                    let _ = cache.set(
+                        &cache_key,
+                        &json_str,
+                        Some(crate::cache::DEFAULT_CACHE_TTL_SECS),
+                    );
                 }
             }
         }
