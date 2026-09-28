@@ -87,17 +87,17 @@
 
 **Partial or roadmap:** deeper SQL builder coverage (e.g. more `SeaQuery` surface re-exported on [`SelectQuery`](./src/query/select.rs)), further migration tooling parity, and any remaining pooling parity called out in [PRD_CONNECTION_POOLING.md](./docs/planning/PRD_CONNECTION_POOLING.md) and [POOLING_OPERATIONS.md](./docs/POOLING_OPERATIONS.md). **Shipped on `SelectQuery`:** [`with_cte`](./src/query/select.rs) (CTE + `all`/`one`), [`join_subquery`](./src/query/select.rs), [`window`](./src/query/select.rs) / [`expr_window*`](./src/query/select.rs), existing [`subquery_column`](./src/query/select.rs) / [`window_function_cust`](./src/query/select.rs). **Pool reads:** [`ReadPreference`](./src/pool/pooled.rs) + [`PooledLifeExecutor::with_read_preference`](./src/pool/pooled.rs) force primary-tier reads when you need read-your-writes; default routing still follows WAL lag. **Session:** `LifeRecord::attach_session_with_model` auto-syncs literals into the identity-map `Rc` via `to_model()` when mutations notify the session ([PRD §9](./docs/planning/PRD_SCHEMA_VALIDATORS_SESSION_AND_SCOPES.md)); F-style `set_*_expr` remains record-only until `update()`.
 
-**Roadmap / vision:** productized “transparent Redis on every read”; LifeReflector and cache coherence in [`lifeguard-reflector`](./lifeguard-reflector/).
+**Roadmap / vision:** transparent Redis cache-aside shipped for `ModelManager::find_by_id` (opt-in via `CachedLifeExecutor` / `with_cache_provider`; invalidated on insert/update/delete); LifeReflector shipped in [`lifeguard-reflector`](./lifeguard-reflector/) (leader election + LISTEN/NOTIFY active-set refresh). “Redis on every read path” remains vision.
 
 For percentages and row-by-row status, use the mapping document linked in the section intro rather than this table alone.
 
 ### Key differentiators
 
 **Lifeguard's Unique Advantages:**
-1. **LifeReflector** - Distributed cache coherence (Oracle Coherence–style active set) — **unique**; **🟡** product evolution in [`lifeguard-reflector`](./lifeguard-reflector/)
+1. **LifeReflector** - Distributed cache coherence (Oracle Coherence–style active set) — **unique**; **✅** shipped in [`lifeguard-reflector`](./lifeguard-reflector/) (Redlock leader election, LISTEN/NOTIFY, active-set refresh; tests in `lifeguard-reflector/tests/reflector_integration.rs`)
 2. **Coroutine-Native** - No async overhead, deterministic scheduling — **unique** among these ORMs ✅
 3. **WAL-Based Replica Routing** - Pool + [`WalLagMonitor`](./src/pool/wal.rs) — **shipped** for `LifeguardPool` reads ✅
-4. **TTL-Based Active Set** - Adaptive caching — **🟡** vision / reflector path; not automatic on every app read
+4. **TTL-Based Active Set** - Adaptive caching — **✅** shipped (reflector refresh + eviction of deleted rows); not automatic on every app read
 5. **DeriveLinked Macro** - Multi-hop relationship code generation — **competitive advantage** ✅ (SeaORM has no direct equivalent)
 6. **Session/Unit of Work** — **🟡** `Session` + identity map + `flush_dirty` / `flush_dirty_with_map_key` / pending insert + promote / `flush_dirty_in_transaction` / `flush_dirty_in_transaction_pooled` ([PRD §9](./docs/planning/PRD_SCHEMA_VALIDATORS_SESSION_AND_SCOPES.md))
 

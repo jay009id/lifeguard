@@ -6,12 +6,21 @@ Integrate Redis into Lifeguard's read path. LifeModel queries should transparent
 
 ## Acceptance Criteria
 
-- [ ] LifeModel queries check Redis first
-- [ ] Cache hit: return data from Redis (sub-millisecond)
-- [ ] Cache miss: read from database, populate Redis
-- [ ] TTL-based expiration (configurable per model)
-- [ ] Cache key format: `lifeguard:model:<table>:<id>`
-- [ ] Unit tests demonstrate transparent caching
+- [x] LifeModel queries check Redis first
+- [x] Cache hit: return data from Redis (sub-millisecond)
+- [x] Cache miss: read from database, populate Redis
+- [x] TTL-based expiration (configurable per model)
+- [x] Cache key format: `lifeguard:model:<table>:<id>`
+- [x] Unit tests demonstrate transparent caching
+
+**Shipped** for `ModelManager::find_by_id` (cache-aside GET → miss → Postgres → `SETEX`),
+activated by `CachedLifeExecutor` / `MayPostgresExecutor::with_cache_provider` +
+`RedisCacheProvider`. Tests: `tests/db_integration/cache_transparent.rs`. Deviations from
+the sketch below: TTL is a global default (`lifeguard::cache::keys::DEFAULT_CACHE_TTL_SECS`),
+not per-model; the write path performs **explicit invalidation** (DEL on
+insert/update/delete) rather than NOTIFY-per-write — the reflector refreshes warm keys
+asynchronously on top of that. Other read APIs (`find`, `find_related`, raw SQL) do not
+consult the cache yet; only integer primary keys named `id` are served.
 
 ## Technical Details
 

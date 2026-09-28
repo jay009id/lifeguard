@@ -74,16 +74,20 @@ A **standalone microservice** that maintains cluster-wide cache coherence:
 
 **Enterprise:** commercial or source-available licensing may apply for some LifeReflector deployments. Source and package layout live under [`lifeguard-reflector`](./lifeguard-reflector/); contact enterprise@microscaler.io for licensing questions.
 
-### Transparent caching system (target)
+### Transparent caching system
 
-**Target behavior** (not fully wired as “magic” on every read path in this crate today): Lifeguard’s design calls for caching that still respects PostgreSQL primaries and replicas:
+**Shipped scope** (as of the current revision): `ModelManager::find_by_id` performs cache-aside reads when the executor exposes a cache provider — opt in via `CachedLifeExecutor` (or `MayPostgresExecutor::with_cache_provider`) + `RedisCacheProvider`. Miss → Postgres → `SETEX`; insert/update/delete invalidate the model key. `lifeguard-reflector` keeps already-cached keys aligned across services after commits.
 
-- **Check Redis first:** Sub-millisecond reads if cached
+**Remaining vision** (not wired as “magic” on every read path yet): Lifeguard’s design calls for caching that still respects PostgreSQL primaries and replicas:
+
+- **Check Redis first:** Sub-millisecond reads if cached (shipped for `find_by_id`; other read APIs go straight to the database)
 - **Read from replicas:** When healthy (WAL lag < threshold)
 - **Write to primary:** Always (as PostgreSQL was designed)
-- **LifeReflector keeps cache fresh:** Automatic coherence across microservices ([`lifeguard-reflector`](./lifeguard-reflector/))
+- **LifeReflector keeps cache fresh:** Automatic coherence across microservices ([`lifeguard-reflector`](./lifeguard-reflector/)) — shipped
 
 Your application code doesn't need to know about Redis, replicas, or cache coherence. It just calls `User::find_by_id(&pool, 42)?` and Lifeguard handles the rest.
+
+**Caveats:** the cache-aside path serves integer primary keys named `id` (`find_by_id`'s `i64` signature) and bypasses RLS/session-context filtering — do not combine a cache provider with session-context executors for RLS-protected entities. Cache errors fail open to the database.
 
 **Note:** For distributed cache coherence across multiple microservices, [`lifeguard-reflector`](./lifeguard-reflector/) provides automatic cache refresh using PostgreSQL LISTEN/NOTIFY.
 

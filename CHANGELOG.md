@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Transparent Redis cache-aside on `ModelManager::find_by_id`.** When an executor
+  exposes a `CacheProvider` (new `CachedLifeExecutor<E>` decorator or
+  `MayPostgresExecutor::with_cache_provider` + `RedisCacheProvider`, now re-exported at the
+  crate root), `find_by_id` GETs `lifeguard:model:<table>:<id>` first, populates on miss
+  with the default TTL, and the generated insert/update/delete path invalidates the key.
+  Cache errors fail open to the database. Shared helpers in `lifeguard::cache::keys`
+  (`model_cache_key`, `cache_key_pk_string`, `DEFAULT_CACHE_TTL_SECS`). Caveats: i64
+  primary keys named `id` only; bypasses RLS/session filtering. Tests:
+  `tests/db_integration/cache_transparent.rs`.
+- **`lifeguard-reflector` is a real service.** Redlock leader election (atomic `SET NX PX`
+  acquire, Lua-CAS renewal), LISTEN/NOTIFY consumption (channels configured per
+  `#[notify(channel = "...")]`), and TTL active-set refresh: on each notification the
+  reflector checks whether the model key exists in Redis, re-reads the row from the
+  primary (typed bind parameter, index-friendly), refreshes with `SETEX`, and evicts keys
+  whose row was deleted. TOML config + `REFLECTOR_*` env overrides; `run_tick` is a
+  library API so tests drive it without spawning the loop. Tests:
+  `lifeguard-reflector/tests/reflector_integration.rs` (env-gated on `TEST_DATABASE_URL` +
+  `TEST_REDIS_URL`).
+- `.config/nextest.toml`: `lifeguard-shared-reflector` test group serializes the reflector
+  integration tests (shared table + channel + key).
+
+### Changed
+
+- **Generated `LifeRecord` write path now invalidates instead of write-through.** Insert
+  and update previously `SET` the model key directly; they now `DEL` it (delete already
+  did), so the read path is the only writer of cached values and the reflector can refresh
+  them coherently. Primary keys of any supported type (UUID, String, SmallInt, …) now
+  render into cache keys — previously only `BigInt`/`Int` did.
+- `ModelManager::find_by_id` uses `lifeguard::cache::keys` helpers and the shared
+  `DEFAULT_CACHE_TTL_SECS` constant instead of a hardcoded TTL.
+
+### Removed
+
+- `lifeguard::cache::reflector` scaffold (`LifeReflector` with hardcoded
+  `is_leader = true` and a no-op sleep loop) — replaced by the real
+  `lifeguard-reflector` crate.
+
 ### Changed
 
 - **Tracing spans nest under the coroutine's context via `may_tracing`; nesting is on by

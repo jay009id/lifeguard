@@ -20,7 +20,7 @@
 
 ## 🏗️ Architecture overview
 
-High-level data flow: your app and ORM go through `**LifeguardPool`** to **PostgreSQL** (writes and strong reads on the **primary**; scaled reads may use **replicas** when routing allows). **Redis** is optional cache-aside; `**[lifeguard-reflector](./lifeguard-reflector/)`** refreshes warm keys **asynchronously** after commits (not on the `SELECT` hot path).
+High-level data flow: your app and ORM go through `**LifeguardPool`** to **PostgreSQL** (writes and strong reads on the **primary**; scaled reads may use **replicas** when routing allows). **Redis** is optional cache-aside: `**ModelManager::find_by_id**` reads through it when the executor carries a provider (`**CachedLifeExecutor`** / `with_cache_provider`), misses populate it, and insert/update/delete invalidate the model key; `**[lifeguard-reflector](./lifeguard-reflector/)`** refreshes warm keys **asynchronously** after commits via LISTEN/NOTIFY (not on the `SELECT` hot path).
 
 ```mermaid
 flowchart LR
@@ -86,8 +86,9 @@ Lifeguard is **OpenTelemetry-compatible**: optional `**tracing`** spans/events a
 
 ## 🧪 Testing
 
-- **Library tests:** `cargo test -p lifeguard`, workspace members (`lifeguard-derive`, `lifeguard-migrate`, etc.), and (when configured) `cargo nextest` per [DEVELOPMENT.md](./DEVELOPMENT.md) / [justfile](./justfile).
+- **Library tests:** `cargo test -p lifeguard`, workspace members (`lifeguard-derive`, `lifeguard-migrate`, `lifeguard-reflector`, etc.), and (when configured) `cargo nextest` per [DEVELOPMENT.md](./DEVELOPMENT.md) / [justfile](./justfile).
 - **Integration database:** `lifeguard::test_helpers::TestDatabase` and env vars such as `TEST_DATABASE_URL` — see [docs/TEST_INFRASTRUCTURE.md](./docs/TEST_INFRASTRUCTURE.md).
+- **Transparent cache / reflector:** `tests/db_integration/cache_transparent.rs` (db suite) exercises the Redis cache-aside path against `TEST_REDIS_URL`; `lifeguard-reflector/tests/reflector_integration.rs` proves leader election and NOTIFY-driven refresh (both envs required, skips otherwise).
 
 There is **no** `lifeguard::testkit` / `test_pool!` macro in this repository; use `test_helpers` and the integration-test binaries under `tests/`.
 

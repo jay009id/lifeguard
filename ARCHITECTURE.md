@@ -56,7 +56,7 @@ flowchart TB
     style Ex fill:#90ee90,stroke:#333,stroke-width:2px
 ```
 
-**Legend (numbers):** **1–4** — synchronous request path through ORM → pool → **primary** (writes, read-your-writes, or forced primary) or **replicas** (scaled reads when the pool routes there). **5–6** — optional Redis **read-through**: not automatic in every API today; pattern is GET first, on miss run **1–4** then populate Redis. **7–10** — **asynchronous**: after a successful commit, **NOTIFY** wakes LifeReflector; it refreshes Redis only for keys already in the active set (see [The Killer Feature: LifeReflector](./VISION.md#the-killer-feature-lifereflector) in **[VISION.md](./VISION.md)**).
+**Legend (numbers):** **1–4** — synchronous request path through ORM → pool → **primary** (writes, read-your-writes, or forced primary) or **replicas** (scaled reads when the pool routes there). **5–6** — optional Redis **read-through**: shipped for `ModelManager::find_by_id` (opt-in via `CachedLifeExecutor` / `with_cache_provider`); GET first, on miss run **1–4** then populate Redis; the generated write path invalidates the key on insert/update/delete. **7–10** — **asynchronous**: after a successful commit, **NOTIFY** wakes LifeReflector; it refreshes Redis only for keys already in the active set (see [The Killer Feature: LifeReflector](./VISION.md#the-killer-feature-lifereflector) in **[VISION.md](./VISION.md)**).
 
 **Key Components:**
 - **LifeguardPool**: Persistent connection pool; routes to primary vs replica **worker pools** using WAL lag and optional [`ReadPreference`](./src/pool/pooled.rs).
