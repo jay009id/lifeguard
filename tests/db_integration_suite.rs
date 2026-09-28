@@ -82,3 +82,6 @@ mod pool_worker_death;
 mod readonly;
 #[path = "db_integration/rls_integration.rs"]
 mod rls_integration;
+
+#[path = "db_integration/cache_transparent.rs"]
+mod cache_transparent;
