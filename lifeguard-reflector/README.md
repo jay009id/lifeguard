@@ -21,29 +21,35 @@ reflector itself stays primary-only:
 
 ```mermaid
 graph TB
-    subgraph Apps["Lifeguard apps (ORM)"]
-        A1[App 1]
-        A2[App 2]
-        A3[App N]
+    subgraph Cluster["Microservice Cluster"]
+        M1[Microservice 1]
+        M2[Microservice 2]
+        MN[Microservice N]
     end
 
-    subgraph Reflectors["Reflector instances"]
+    subgraph ReflectorSvc["LifeReflector Service"]
         Leader[Leader<br/>holds Redlock]
-        S1[Standby]
-        S2[Standby]
+        S1[Standby 1]
+        S2[Standby 2]
     end
 
-    subgraph Data["Data tier"]
-        PG[(PostgreSQL primary)]
-        Replica[(PostgreSQL replica)]
+    subgraph Data["Data Layer"]
+        PG[(PostgreSQL<br/>primary)]
+        Replica[(PostgreSQL<br/>replica)]
         Redis[(Redis)]
     end
 
-    A1 -->|read/write via ORM| PG & Redis & Replica
-    A2 -->|read/write via ORM| PG & Redis & Replica
-    A3 -->|read/write via ORM| PG & Redis & Replica
+    M1 -->|writes| PG
+    M2 -->|writes| PG
+    MN -->|writes| PG
+    M1 -->|GET / SET / invalidate| Redis
+    M2 -->|GET / SET / invalidate| Redis
+    MN -->|GET / SET / invalidate| Redis
+    M1 -->|read on cache miss, healthy tier| Replica
+    M2 -->|read on cache miss, healthy tier| Replica
+    MN -->|read on cache miss, healthy tier| Replica
 
-    PG -->|streaming replication| Replica
+    PG ==>|streaming replication| Replica
     PG -->|pg_notify payload| Leader
     Leader -->|re-read warm rows| PG
     Leader -->|SETEX / DEL warm keys| Redis
@@ -51,10 +57,23 @@ graph TB
     S1 -. acquire attempt .-> Redis
     S2 -. acquire attempt .-> Redis
 
-    style Leader fill:#fff4e1
-    style Redis fill:#ffe1e1
-    style PG fill:#e1ffe1
-    style Replica fill:#e1f5ff
+    classDef app fill:#fcfcfb,stroke:#52514e,color:#0b0b0b
+    classDef pg fill:#e2f0e2,stroke:#008300,color:#0b0b0b
+    classDef replica fill:#dcebfa,stroke:#2a78d6,color:#0b0b0b
+    classDef redis fill:#fbe2e2,stroke:#e34948,color:#0b0b0b
+    classDef leader fill:#fbf1d3,stroke:#eda100,color:#0b0b0b
+    classDef standby fill:#f4f4f2,stroke:#898781,color:#52514e
+
+    class M1,M2,MN app
+    class PG pg
+    class Replica replica
+    class Redis redis
+    class Leader leader
+    class S1,S2 standby
+
+    style Cluster fill:#f9f9f7,stroke:#c3c2b7,color:#52514e
+    style ReflectorSvc fill:#f9f9f7,stroke:#c3c2b7,color:#52514e
+    style Data fill:#f9f9f7,stroke:#c3c2b7,color:#52514e
 ```
 
 - Standbys talk only to Redis (lock acquire attempts) — they hold no
@@ -62,6 +81,9 @@ graph TB
 - The `pg_notify` trigger runs on the primary (writes happen there), so
   notifications flow primary → leader; the leader re-reads warm rows from the
   primary.
+- The replica is read-only for apps: only the miss `SELECT` of a pooled
+  executor with a healthy tier lands there. Writes and the fallback read
+  path always hit the primary.
 - There is deliberately no apps → reflector edge: apps never talk to the
   reflector. They coordinate only through shared state — app writes fire the
   `pg_notify` trigger the leader LISTENs, and both sides touch the same Redis
