@@ -54,7 +54,7 @@ struct User {
 
 A **standalone microservice** that maintains cluster-wide cache coherence:
 
-- **Leader-elected Raft system:** Only one active reflector at a time (no duplicate work)
+- **Leader-elected system** (target: Raft consensus; shipped: single-node **Redlock** with hot standbys): Only one active reflector at a time (no duplicate work)
 - **Postgres LISTEN/NOTIFY integration:** Subscribes to database change events
 - **Intelligent cache refresh:** Only **re-writes** keys that already exist in Redis (TTL-based **active set**—no stale copy to fix if the key was never cached)
 - **Read path populates Redis:** Cache miss → load from Postgres → `SETEX` (with TTL); new rows enter Redis when something **reads** them (or via warm-up), not from `NOTIFY` alone
@@ -69,6 +69,62 @@ A **standalone microservice** that maintains cluster-wide cache coherence:
 5. **If it exists** → Reflector **re-reads from Postgres** and **updates Redis** so no client keeps a pre-write value.
 6. **If it does not exist** → Reflector **ignores** the notify: there is **no cached row to invalidate**—nothing in Redis was wrong. The next read miss still runs step (1) and loads fresh data from Postgres into Redis.
 7. **Cross-service reads:** Once a key is in Redis, other services can read it from Redis; steps 2–6 keep **already-cached** keys aligned with Postgres after writes.
+
+**Target system architecture** — the original sketch, kept as the design north star. The as-built design differs in a few specific ways; see the deltas below and the accurate as-built diagrams in the [`lifeguard-reflector` README](./lifeguard-reflector/README.md):
+
+```mermaid
+graph TB
+    subgraph Cluster["Microservice Cluster"]
+        M1[Microservice 1]
+        M2[Microservice 2]
+        M3[Microservice 3]
+        MN[Microservice N]
+    end
+
+    subgraph Reflector["LifeReflector Service"]
+        Leader[Leader<br/>Raft-elected]
+        Follower1[Follower]
+        Follower2[Follower]
+    end
+
+    subgraph Data["Data Layer"]
+        PG[(PostgreSQL<br/>Primary)]
+        Redis[(Redis Cache)]
+        Replica[(PostgreSQL<br/>Replica)]
+    end
+
+    M1 -->|read/write| Redis
+    M2 -->|read/write| Redis
+    M3 -->|read/write| Redis
+    MN -->|read/write| Redis
+
+    M1 -.->|writes| PG
+    M2 -.->|writes| PG
+    M3 -.->|writes| PG
+
+    PG -->|LISTEN/NOTIFY| Leader
+    Leader -->|refresh| Redis
+    Leader -->|read| PG
+
+    Redis -->|read| M1
+    Redis -->|read| M2
+    Redis -->|read| M3
+    Redis -->|read| MN
+
+    style Leader fill:#fff4e1
+    style Redis fill:#ffe1e1
+    style PG fill:#e1ffe1
+    style Cluster fill:#e1f5ff
+```
+
+**Target vs as-built deltas:**
+
+| Aspect | Target (this sketch) | As-built |
+|---|---|---|
+| Leader election | Raft-elected leader + followers | Single-node Redlock (`SET NX PX` + Lua-CAS renewal); extra instances are hot standbys that sleep and retry |
+| Who touches Redis | Microservices read/write Redis directly | Only the ORM (cache-aside `find_by_id`); app code never sees the cache |
+| Writes | Dashed secondary edge to Postgres | Always land on the primary (the only write path) and invalidate the cache key |
+| Replica | Drawn without edges | Serves pooled miss reads when the tier is healthy; receives streaming replication |
 
 **Result:** Oracle Coherence–style **coherence for the active set** in Redis: lazy (or warmed) population on reads, plus **notify-driven refresh** only where a stale cache entry could otherwise exist. See the **sequence diagram** below (cache miss branch → Postgres → `SETEX`).
 
